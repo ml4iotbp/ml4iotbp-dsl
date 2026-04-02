@@ -1,0 +1,98 @@
+#BPM Specialist: correct
+process-data-sources:
+  procInspect:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: iStart
+          - endTime: timeStamp
+            internal-id: iEnd
+          - packageId: string
+
+  procTransport:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: tStart
+          - endTime: timeStamp
+            internal-id: tEnd
+          - packageId: string
+
+  procDecision:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: compliance
+
+iot-data-sources:
+  iotTemp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  inspectionDur:
+    from: procInspect
+    fields: 
+      - iEnd
+      - iStart
+    operation: substract
+
+  transportDur:
+    from: procTransport
+    fields: 
+      - tEnd
+      - tStart
+    operation: substract
+
+  avgTemp:
+    from: iotTemp
+    operation: avg
+    field: temperature
+    window: tEnd-tStart
+    anchor:
+      element: transportationTask
+      event: completed
+      correlation-key: packageId
+
+  complianceLabel:
+    from: procDecision
+    field: compliance
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  ds:
+    data:
+      - PACKAGE_ID: packageId
+      - INSPECTION_TIME: inspectionDur
+      - TRANSPORT_TIME: transportDur
+      - TEMPERATURE: avgTemp
+    label:
+      C: complianceLabel
+
+models:
+  rf:
+    type: Classification
+    algorithm: Random Forest
+    dataset: ds
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15

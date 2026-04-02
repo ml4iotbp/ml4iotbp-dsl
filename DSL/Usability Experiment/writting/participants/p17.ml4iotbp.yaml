@@ -1,0 +1,104 @@
+#IoT engineer: correct
+process-data-sources:
+  p_ins:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: insStart
+          - endTime: timeStamp
+            internal-id: insEnd
+          - packageId: string
+
+  p_tr:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: trStart
+          - endTime: timeStamp
+            internal-id: trEnd
+          - packageId: string
+
+  p_dec:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: comp
+
+iot-data-sources:
+  i_temp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  d_insp:
+    from: p_ins
+    fields: 
+      - insEnd
+      - insStart
+    operation: substract
+    anchor:
+      element: inspectionTask
+      event: completed
+
+  d_tr:
+    from: p_tr
+    fields: 
+      - trEnd
+      - trStart
+    operation: substract
+    anchor:
+      element: transportationTask
+      event: completed
+
+  avg_t:
+    from: i_temp
+    operation: avg
+    field: temperature
+    window: trEnd-trStart
+    anchor:
+      element: transportationTask
+      event: completed
+
+  lbl:
+    from: p_dec
+    field: comp
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  data:
+    data:
+      - PID: packageId
+      - DI: d_insp
+      - DT: d_tr
+      - TEMP: avg_t
+    label:
+      C: lbl
+
+models:
+  m:
+    type: Classification
+    algorithm: Random Forest
+    dataset: data
+    hyperparameters:
+      max_depth: 15
+      n_estimators: 250
+      

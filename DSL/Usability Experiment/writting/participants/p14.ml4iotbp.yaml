@@ -1,0 +1,89 @@
+#IoT engineer: missing window in IoT feature, syntax mistakes on hyperparameters
+process-data-sources:
+  ins:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: insS
+          - endTime: timeStamp
+            internal-id: insE
+          - packageId: string
+
+  tr:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: trS
+          - endTime: timeStamp
+            internal-id: trE
+          - packageId: string
+
+  dec:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: decVal
+
+iot-data-sources:
+  temp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  finsp:
+    from: ins
+    fields: [insE, insS]
+    operation: substract
+
+  ftrans:
+    from: tr
+    fields: [trE, trS]
+    operation: substract
+
+  ftemp:
+    from: temp
+    operation: avg
+    field: temperature
+
+  flabel:
+    from: dec
+    field: decVal
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  ds:
+    data:
+      - ID: packageId
+      - DI: finsp
+      - DT: ftrans
+      - TEMP: ftemp
+    label:
+      C: flabel
+
+models:
+  model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: ds
+    hyperparameters:
+      nestimators: 250
+      max-depth: 15

@@ -1,0 +1,100 @@
+#ML expert:Missing positive-class and vendor-specific, feature fields as JSON array 
+process-data-sources:
+  inspection_src:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: iStart
+          - endTime: timeStamp
+            internal-id: iEnd
+          - packageId: string
+
+  transport_src:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: tStart
+          - endTime: timeStamp
+            internal-id: tEnd
+          - packageId: string
+
+  decision_src:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: decision
+
+iot-data-sources:
+  temp_src:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+      - packageId: string
+
+features:
+  f_insp_dur:
+    from: inspection_src
+    fields: [iEnd, iStart]
+    operation: substract
+    anchor:
+      element: inspectionTask
+      event: completed
+
+  f_trans_dur:
+    from: transport_src
+    fields: [tEnd, tStart]
+    operation: substract
+    anchor:
+      element: transportationTask
+      event: completed
+
+  f_avg_temp:
+    from: temp_src
+    operation: avg
+    field: temperature
+    window: tEnd-tStart
+    anchor:
+      element: transportationTask
+      event: completed
+
+  label_comp:
+    from: decision_src
+    field: decision
+    target-type: binary
+    anchor:
+      element: complianceGateway
+      event: path-evaluation
+
+dataset:
+  ds:
+    data:
+      - ID: packageId
+      - INS: f_insp_dur
+      - TRN: f_trans_dur
+      - TMP: f_avg_temp
+    label:
+      C: label_comp
+
+models:
+  rf_model:
+    type: Classification
+    algorithm: Random Forest
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15
+    dataset: ds

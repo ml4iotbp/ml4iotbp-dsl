@@ -1,0 +1,238 @@
+process-context:
+  engine: Camunda
+  host: http://localhost:8080/engine-rest
+  process-id: DistributionCenterTest
+  time-stamp: yyyy-MM-dd'T'HH:mm:ss.SSSZ
+  start-event: containerArrivalMsg
+  end-event: endEvent
+  format: application/json
+  instance-time: 2026-04-01T07:30:00.000+0200
+
+process-data-sources:
+  quality_event_source:
+      element-id: evaluateQualityTask 
+      type: User Task
+      events:
+        completed: 
+          variables: 
+            - startTime: timeStamp
+              internal-id: evalStartingTime 
+            - endTime: timeStamp
+              internal-id: evalCompleteTime 
+            - palletId: string 
+            - qualityFirmness: string 
+            - qualityColor: string 
+            - qualityDamages: string 
+  
+  sample_event_source:
+      element-id: selectSampleMessage
+      type: Message
+      events:
+        triggered:
+          variables:
+          - startTime: timeStamp
+            internal-id: selStartingTime 
+
+  bacteria_event_source:
+      element-id: bacteriaCondition 
+      type: Exclusive Gateway
+      events:
+        path-evaluation:
+          variables: 
+          - selectedFlow: string
+            internal-id: bacteria_detected 
+
+iot-data-sources:
+  config1:
+    format: application/json
+    paradigm: HTTPCompliant
+    method: GET
+    sampling-time: 2s
+    host:  https://pedvalar.webs.upv.es/
+    time-stamp: dd/MM/yyyy HH:mm:ss
+
+    refrigerator_temperature_sensor:
+      end-point: iap/rest/sensor/refrigerator/temperature/
+      schema:
+        - temperature: float
+        - unit: string
+        - timeStamp: timeStamp
+        
+    refrigerator_humidity_sensor:
+      end-point: iap/rest/sensor/refrigerator/humidity/
+      schema:
+        - humidity: float
+        - unit: string
+        - timeStamp: timeStamp
+
+  config2:
+    format: application/csv
+    paradigm: MessageOriented
+    broker: RabbitMQ
+    protocol: AMQP
+    host: localhost
+    time-stamp: d MMM uuuu HH:mm:ss z
+    exchange: containers
+    
+    container_temperature_sensor:
+      topic: temp.con.topic
+      schema:
+        - sensor-id: string
+        - pallet-id: string
+        - temperature: float
+        - time-stamp: timeStamp
+
+    container_humidity_sensor:
+      topic: hum.con.topic 
+      schema:
+        - sensor-id: string
+        - pallet-id: string
+        - humidity: float
+        - time-stamp: timeStamp
+
+
+features:
+  f_quality_results:
+    from: quality_event_source
+    fields: 
+      - palletId
+      - qualityFirmness
+      - qualityColor
+      - qualityDamages
+    operation: include
+    anchor:
+      element: evaluateQualityTask
+      event: completed
+      
+  f_quality_eval_duration:
+    from: quality_event_source
+    fields: 
+      - evalCompleteTime
+      - evalStartingTime
+    operation: substract
+    anchor:
+      element: evaluateQualityTask
+      event: completed
+
+  f_storage_time:
+    from:
+      sample_event_source:
+        field: selStartingTime 
+      quality_event_source:
+        field: evalCompleteTime
+    fields: 
+      - selStartingTime 
+      - evalCompleteTime
+    operation: substract
+    anchor:
+      element: selectSampleMessage
+      event: triggered
+
+  f_avg_container_temp_before:
+    from: container_temperature_sensor
+    operation: avg
+    field: temperature
+    window: 1m
+    anchor:
+      element: evaluateQualityTask
+      event: started
+      correlation-key: palletId
+
+  f_avg_container_humidity_before:
+    from: container_humidity_sensor
+    operation: avg
+    field: humidity
+    window: 1m
+    anchor:
+      element: evaluateQualityTask
+      event: started
+      correlation-key: palletId
+
+  f_avg_container_temp_during:
+    from: container_temperature_sensor
+    operation: avg
+    field: temperature
+    window: evalCompleteTime-evalStartingTime
+    anchor:
+      element: evaluateQualityTask
+      event: completed
+      correlation-key: palletId
+
+  f_avg_container_humidity_during:
+    from: container_humidity_sensor
+    operation: avg
+    field: humidity
+    window: evalCompleteTime-evalStartingTime
+    anchor:
+      element: evaluateQualityTask
+      event: completed
+      correlation-key: palletId
+
+  f_avg_refrigerator_temp:
+    from: refrigerator_temperature_sensor
+    operation: avg
+    field: temperature
+    window: selStartingTime - evalCompleteTime
+    anchor:
+      element: selectSampleMessage
+      event: triggered
+
+  f_avg_refrigerator_humidity:
+    from: refrigerator_humidity_sensor
+    operation: avg
+    field: humidity
+    window: selStartingTime - evalCompleteTime 
+    anchor:
+      element: selectSampleMessage
+      event: triggered
+
+  label_bacteria_detected:
+    from: bacteria_event_source
+    operation: future_event_exists
+    field: bacteria_detected
+    target-type: binary
+    positive-class: yes
+    anchor:
+      element: bacteriaCondition
+      event: path-evaluation
+
+dataset:
+  microbial_risk_ds:
+    num-rows: 100
+    data:
+      - f_quality_results:
+        - PI: palletId
+        - QF: qualityFirmness
+        - QC: qualityColor
+        - D: qualityDamages
+      - QED: f_quality_eval_duration
+      - ST: f_storage_time
+      - CTB: f_avg_container_temp_before
+      - CHB: f_avg_container_humidity_before
+      - CTD: f_avg_container_temp_during
+      - CHD: f_avg_container_humidity_during
+      - RT: f_avg_refrigerator_temp
+      - RH: f_avg_refrigerator_humidity
+      - B: label_bacteria_detected
+    label: 
+      B: label_bacteria_detected
+    train-ratio: 0.7
+    val-ratio: 0.15
+    test-ratio: 0.15
+
+models:
+  ml_bacteria_prediction:
+    algorithm: Random Forest
+    type: Classification
+    dataset: microbial_risk_ds
+    hyperparameters:
+      n_estimators: 300
+      max_depth: 15
+    training:
+      type: Batch
+      metrics:
+        - f1
+        - roc_auc
+      schedule:
+        type: Periodic
+        every: 24h

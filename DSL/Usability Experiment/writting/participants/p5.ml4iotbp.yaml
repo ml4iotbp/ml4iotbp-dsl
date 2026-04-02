@@ -1,0 +1,103 @@
+#ML expert:correct
+process-data-sources:
+  inspectionNode:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: is
+          - endTime: timeStamp
+            internal-id: ie
+          - packageId: string
+
+  movementNode:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: ts
+          - endTime: timeStamp
+            internal-id: te
+          - packageId: string
+
+  decisionNode:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: label
+
+iot-data-sources:
+  temperatureFeed:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  inspectionDuration:
+    from: inspectionNode
+    fields:
+      - ie
+      - is
+    operation: substract
+    anchor:
+      element: inspectionTask
+      event: completed
+
+  transportationDuration:
+    from: movementNode
+    fields: 
+      - te
+      - ts
+    operation: substract
+    anchor:
+      element: transportationTask
+      event: completed
+
+  avgTransportTemp:
+    from: temperatureFeed
+    operation: avg
+    field: temperature
+    window: te-ts
+    anchor:
+      element: transportationTask
+      event: completed
+
+  complianceLabel:
+    from: decisionNode
+    field: label
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  chain_dataset:
+    data:
+      - PACKAGE: packageId
+      - DI: inspectionDuration
+      - DT: transportationDuration
+      - TT: avgTransportTemp
+    label:
+      C: complianceLabel
+
+models:
+  compliance_rf_:
+    type: Classification
+    algorithm: Random Forest
+    dataset: chain_dataset
+    hyperparameters:
+      max_depth: 15
+      n_estimators: 250

@@ -1,0 +1,305 @@
+process-context:
+  engine: Camunda
+  process-id: DrugBatches
+  start-event: batchArrivalMsg
+  end-event: endEvent
+  host: http://localhost:8080/engine-rest
+  format: application/json
+  time-stamp: yyyy-MM-dd'T'HH:mm:ss.SSSZ
+
+
+process-data-sources:
+  batch_reception_source:
+    element-id: batchReceptionEvent 
+    type: Message
+    events:
+      triggered: 
+        variables: 
+          - startTime: timeStamp
+            internal-id: receptionTime 
+
+  manual_inspection_source:
+    element-id: manualInspectionTask 
+    type: User Task
+    events:
+      completed: 
+        variables: 
+          - startTime: timeStamp
+            internal-id: inspectionStartingTime 
+          - endTime: timeStamp
+            internal-id: inspectionCompleteTime
+          - batchId: string
+          - hardness: string 
+          - integrity: string 
+          - visibleContamination: string 
+  
+  sample_source:
+      element-id: selectSampleTask
+      type: User Task
+      events:
+        triggered:
+          variables:
+          - startTime: timeStamp
+            internal-id: selStartingTime 
+          - endTime: timeStamp
+            internal-id: selCompleteTime 
+  
+  storage_source:
+      element-id: storageTask
+      type: Service Task
+      events:
+        triggered:
+          variables:
+          - endTime: timeStamp
+            internal-id: storageTime 
+  
+  laboratory_ready_source:
+      element-id: labReadyMessage
+      type: Message
+      events:
+        triggered:
+          variables:
+          - endTime: timeStamp
+            internal-id: labReadyTime 
+
+  meet_regulations_source:
+      element-id: meetRegulationCondition 
+      type: Exclusive Gateway
+      events:
+        path-evaluation:
+          variables: 
+          - selectedFlow: string
+            internal-id: meetRegulation 
+
+iot-data-sources:
+  config1:
+    format: application/csv
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: localhost
+    time-stamp: d MMM uuuu HH:mm:ss z
+    
+    reception_temperature_sensor:
+      exchange: reception
+      topic: temp.recep.topic 
+      schema:
+        - time-stamp: timeStamp
+        - temperature: float
+        - batch-id: string
+
+    reception_humidity_sensor:
+      exchange: reception 
+      topic: hum.recep.topic
+      schema:
+        - time-stamp: timeStamp
+        - humidity: float
+        - batch-id: string
+        
+    reception_light_sensor:
+      exchange: reception
+      topic: light.recep.topic
+      schema:
+        - time-stamp: timeStamp
+        - light: float
+        - batch-id: string
+
+    refrig_env_temperature_sensor:
+      exchange: refrigerator
+      topic: light.ref.topic
+      schema:
+        - temperature: float
+        - unit: string
+        - timeStamp: timeStamp
+        
+    refrig_env_humidity_sensor:
+      exchange: refrigerator
+      topic: hum.ref.topic
+      schema:
+        - humidity: float
+        - unit: string
+        - timeStamp: timeStamp
+
+    refrig_env_light_sensor:
+      exchange: refrigerator
+      topic: light.ref.topic
+      schema:
+        - light: float
+        - unit: string
+        - timeStamp: timeStamp
+
+features:
+  f_manual_inspection_values:
+    from: manual_inspection_source
+    fields: 
+      - batchId
+      - hardness
+      - integrity
+      - visibleContamination
+    operation: include
+    anchor:
+      element: manualInspectionTask
+      event: completed
+      
+  f_manual_inspection_delay:
+    from:
+      manual_inspection_source:
+        fields: 
+          - inspectionStartingTime
+      batch_reception_source:
+        fields:
+          - receptionTime
+    operation: substract
+    anchor:
+      element: manualInspectionTask
+      event: started
+
+  f_manual_inspection_duration:
+    from: manual_inspection_source
+    fields: 
+      - inspectionCompleteTime
+      - inspectionStartingTime
+    operation: substract
+    anchor:
+      element: manualInspectionTask
+      event: completed
+
+  f_sample_selection_duration:
+    from: sample_source
+    fields: 
+      - selCompleteTime 
+      - selStartingTime
+    operation: substract
+    anchor:
+      element: selectSampleTask
+      event: completed
+
+  f_avg_reception_temp:
+    from: reception_temperature_sensor
+    operation: avg
+    field: temperature
+    missing-value: drop
+    window: selCompleteTime-receptionTime
+    anchor:
+      element: selectSampleTask
+      event: completed
+      correlation-key: batchId
+
+  f_avg_reception_hum:
+    from: reception_humidity_sensor
+    operation: avg
+    field: humidity
+    missing-value: drop
+    window: selCompleteTime-receptionTime
+    anchor:
+      element: selectSampleTask
+      event: completed
+      correlation-key: batchId
+
+  f_avg_reception_light:
+    from: reception_light_sensor
+    operation: avg
+    field: light
+    missing-value: drop
+    window: selCompleteTime-receptionTime
+    anchor:
+      element: selectSampleTask
+      event: completed
+      correlation-key: batchId
+
+  f_waiting_duration:
+    from:
+      laboratory_ready_source:
+        fields: 
+          - labReadyTime
+      storage_source:
+        fields:
+          - storageTime
+    operation: substract
+    anchor:
+      element: labReadyMessage
+      event: triggered
+
+  f_avg_cont_env_temp:
+    from: cont_env_temperature_sensor
+    operation: avg
+    field: temperature
+    missing-value: drop
+    window: labReadyTime-storageTime
+    anchor:
+      element: labReadyMessage
+      event: triggered
+      correlation-key: batchId
+
+  f_avg_cont_env_hum:
+    from: cont_env_humidity_sensor
+    operation: avg
+    field: humidity
+    missing-value: drop
+    window: labReadyTime-storageTime
+    anchor:
+      element: labReadyMessage
+      event: triggered
+      correlation-key: batchId
+
+  f_avg_cont_env_light:
+    from: cont_env_light_sensor
+    operation: avg
+    field: light
+    missing-value: drop
+    window: labReadyTime-storageTime
+    anchor:
+      element: labReadyMessage
+      event: triggered
+      correlation-key: batchId
+
+  label_meet_regulation:
+    from: meet_regulations_source
+    field: meetRegulation
+    target-type: binary
+    positive-class: yes
+    anchor:
+      element: meetRegulationCondition
+      event: path-evaluation
+
+dataset:
+  batch_regulation_ds:
+    num-rows: 100
+    data:
+      - f_manual_inspection_values:
+        - BI: batchId
+        - TH: hardness
+        - VI: integrity
+        - VC: visibleContamination
+      - MIS: f_manual_inspection_delay
+      - MID: f_manual_inspection_duration
+      - SSD: f_sample_selection_duration
+      - RCT: f_avg_reception_temp
+      - RCH: f_avg_reception_hum
+      - RCL: f_avg_reception_light
+      - CEW: f_waiting_duration
+      - CET: f_avg_cont_env_temp
+      - CEH: f_avg_cont_env_hum
+      - CEL: f_avg_cont_env_light
+    label: 
+      R: label_meet_regulation
+    train-ratio: 0.7
+    val-ratio: 0.15
+    test-ratio: 0.15
+
+models:
+  ml_batch_meets_regulations:
+    type: Classification
+    algorithm: Random Forest
+    dataset: batch_regulation_ds
+    hyperparameters:
+      n_estimators: 300
+      max_depth: 15
+    training:
+      type: Batch
+      metrics:
+        - f1
+        - roc_auc
+      schedule:
+        type: Periodic
+        every: 24h

@@ -1,0 +1,89 @@
+#IoT engineer: missing operation in avg feature, missing anchors
+process-data-sources:
+  srcInspect:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: iStart
+          - endTime: timeStamp
+            internal-id: iEnd
+          - packageId: string
+
+  srcTrans:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: tStart
+          - endTime: timeStamp
+            internal-id: tEnd
+          - packageId: string
+
+  srcDecision:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: comp
+
+iot-data-sources:
+  srcTemp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  fInspect:
+    from: srcInspect
+    fields: [iEnd, iStart]
+    operation: substract
+
+  fTransport:
+    from: srcTrans
+    fields: [tEnd, tStart]
+    operation: substract
+
+  fTemp:
+    from: srcTemp
+    field: temperature
+    window: tEnd-tStart
+
+  fLabel:
+    from: srcDecision
+    field: comp
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  ds:
+    data:
+      - ID: packageId
+      - DI: fInspect
+      - DT: fTransport
+      - TEMP: fTemp
+    label:
+      C: fLabel
+
+models:
+  model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: ds
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15

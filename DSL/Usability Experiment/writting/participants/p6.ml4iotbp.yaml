@@ -1,0 +1,106 @@
+#ML expert:correct
+process-data-sources:
+  proc_inspect:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: inspectStart
+          - endTime: timeStamp
+            internal-id: inspectEnd
+          - packageId: string
+
+  proc_transport:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: transportStart
+          - endTime: timeStamp
+            internal-id: transportEnd
+          - packageId: string
+
+  proc_decision:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: compliance
+
+iot-data-sources:
+  iot_temp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  feature_inspect:
+    from: proc_inspect
+    fields:
+      - inspectEnd
+      - inspectStart
+    operation: substract
+    anchor:
+      element: inspectionTask
+      event: completed
+
+  feature_transport:
+    from: proc_transport
+    fields:
+      - transportEnd
+      - transportStart
+    operation: substract
+    anchor:
+      element: transportationTask
+      event: completed
+
+  feature_temperature:
+    from: iot_temp
+    operation: avg
+    field: temperature
+    window: transportEnd-transportStart
+    anchor:
+      element: transportationTask
+      event: completed
+
+  feature_label:
+    from: proc_decision
+    field: compliance
+    target-type: binary
+    positive-class: yes
+    anchor:
+      element: complianceGateway
+      event: path-evaluation
+
+dataset:
+  dataset:
+    data:
+      - PACKAGE_ID: packageId
+      - INSPECTION_DURATION: feature_inspect
+      - TRANSPORT_DURATION: feature_transport
+      - AVG_TEMP: feature_temperature
+    label:
+      COMPLIANCE: feature_label
+
+models:
+  model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: dataset
+    hyperparameters:
+      max_depth: 15
+      n_estimators: 250

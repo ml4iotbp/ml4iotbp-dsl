@@ -1,0 +1,17 @@
+dataset:
+  cluster_ds:
+    train-ratio: 0.8
+    val-ratio: 0.1
+    test-ratio: 0.1
+
+models:
+  anomaly_model:
+    type: Clustering
+    algorithm: DBSCAN
+    dataset: cluster_ds
+    training:
+      type: Batch
+      metrics: [silhouette, davies_bouldin, calinski_harabasz, anomaly_rate]
+    hyperparameters:
+      eps: 0.5
+      min_samples: 3

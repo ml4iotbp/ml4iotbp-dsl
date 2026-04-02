@@ -1,0 +1,16 @@
+dataset:
+  churn_ds:
+    train-ratio: 0.6
+    val-ratio: 0.2
+    test-ratio: 0.2
+
+models:
+  churn_model:
+    type: Regression
+    algorithm: Random Forest
+    dataset: churn_ds
+    training:
+      type: Batch
+      metrics: [accuracy]
+    hyperparameters:
+      n_estimators: 10

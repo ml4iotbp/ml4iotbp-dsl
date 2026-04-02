@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" name="" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.3.0">
+  <bpmn:collaboration id="Collaboration_0d1mqls">
+    <bpmn:participant id="Participant_DistributionCenterTest2" name="SMART DISTRIBUTION CENTER" processRef="DistributionCenterTest2">
+      <bpmn:extensionElements>
+        <camunda:field name="system" stringValue="SMARTDIST" />
+        <camunda:field name="isFloWare" stringValue="0" />
+      </bpmn:extensionElements>
+    </bpmn:participant>
+  </bpmn:collaboration>
+  <bpmn:process id="DistributionCenterTest2" isExecutable="true">
+    <bpmn:laneSet id="LaneSet_0mh1agt">
+      <bpmn:lane id="Lane_12ujgak" name="Analyst">
+        <bpmn:flowNodeRef>bacteriaCondition</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>analyzeSampleTask</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_1tfszw3" name="Worker">
+        <bpmn:flowNodeRef>containerArrivalMsg</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>evaluateQualityTask</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>selectSampleTask</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_19isap4" name="Articulated Robot">
+        <bpmn:extensionElements>
+          <camunda:field name="iot" stringValue="true" />
+          <camunda:field name="iotLane" stringValue="existing" />
+        </bpmn:extensionElements>
+        <bpmn:flowNodeRef>distributionCondition</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>moveToRefrigeratorTask</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>moveToGarbageTask</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>moveToDistributionTask</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>endEvent</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:sequenceFlow id="SequenceFlow_14iojv6" sourceRef="containerArrivalMsg" targetRef="evaluateQualityTask" />
+    <bpmn:sequenceFlow id="SequenceFlow_0uaj4fr" sourceRef="evaluateQualityTask" targetRef="distributionCondition" />
+    <bpmn:sequenceFlow id="yesDistributionFlow" name="yes" sourceRef="distributionCondition" targetRef="moveToRefrigeratorTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">#{conditionResult=="yes"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_0039j14" sourceRef="analyzeSampleTask" targetRef="bacteriaCondition" />
+    <bpmn:sequenceFlow id="noBacteriaFlow" name="no" sourceRef="bacteriaCondition" targetRef="moveToDistributionTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">#{conditionResult=="no"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_0yo22aq" sourceRef="moveToGarbageTask" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="Flow_0hynp42" sourceRef="moveToDistributionTask" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="yesBacteriaFlow" name="yes" sourceRef="bacteriaCondition" targetRef="moveToGarbageTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">#{conditionResult=="yes"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="noDistributionFlow" name="no" sourceRef="distributionCondition" targetRef="moveToGarbageTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">#{conditionResult=="no"}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:exclusiveGateway id="distributionCondition" name="distribution conditions?">
+      <bpmn:extensionElements>
+        <camunda:executionListener class="es.upv.pros.pvalderas.bpcontroller.server.bpmn.ConditionEvaluator" event="start" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>SequenceFlow_0uaj4fr</bpmn:incoming>
+      <bpmn:outgoing>yesDistributionFlow</bpmn:outgoing>
+      <bpmn:outgoing>noDistributionFlow</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="moveToRefrigeratorTask" name="Move Pallet to Refrigerator Area" camunda:class="es.upv.pros.pvalderas.bpcontroller.server.bpmn.BPMNServiceClass">
+      <bpmn:extensionElements />
+      <bpmn:incoming>yesDistributionFlow</bpmn:incoming>
+      <bpmn:outgoing>Flow_1oyks1g</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:startEvent id="containerArrivalMsg" name="Container Arrival">
+      <bpmn:extensionElements>
+        <camunda:field name="device" stringValue="Container Detector" />
+      </bpmn:extensionElements>
+      <bpmn:outgoing>SequenceFlow_14iojv6</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="MessageEventDefinition_1q2pais" messageRef="ContainerArrivalID" />
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="moveToGarbageTask" name="Move Pallet to Garbage" camunda:class="es.upv.pros.pvalderas.bpcontroller.server.bpmn.BPMNServiceClass">
+      <bpmn:extensionElements />
+      <bpmn:incoming>noDistributionFlow</bpmn:incoming>
+      <bpmn:incoming>yesBacteriaFlow</bpmn:incoming>
+      <bpmn:outgoing>Flow_0yo22aq</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="moveToDistributionTask" name="Move Pallet to Distribution Area" camunda:class="es.upv.pros.pvalderas.bpcontroller.server.bpmn.BPMNServiceClass">
+      <bpmn:extensionElements />
+      <bpmn:incoming>noBacteriaFlow</bpmn:incoming>
+      <bpmn:outgoing>Flow_0hynp42</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>Flow_0yo22aq</bpmn:incoming>
+      <bpmn:incoming>Flow_0hynp42</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="bacteriaCondition" name="bacteria?">
+      <bpmn:extensionElements>
+        <camunda:executionListener class="es.upv.pros.pvalderas.dsl.test.BacteriaCondition" event="start" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_0039j14</bpmn:incoming>
+      <bpmn:outgoing>noBacteriaFlow</bpmn:outgoing>
+      <bpmn:outgoing>yesBacteriaFlow</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="evaluateQualityTask" name="Evaluate level of firmness, color, damages" camunda:class="es.upv.pros.pvalderas.dsl.test.QualityEvaluation">
+      <bpmn:incoming>SequenceFlow_14iojv6</bpmn:incoming>
+      <bpmn:outgoing>SequenceFlow_0uaj4fr</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="Flow_1oyks1g" sourceRef="moveToRefrigeratorTask" targetRef="selectSampleTask" />
+    <bpmn:userTask id="selectSampleTask" name="Select Sample">
+      <bpmn:incoming>Flow_1oyks1g</bpmn:incoming>
+      <bpmn:outgoing>Flow_0okvd5p</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="Flow_0okvd5p" sourceRef="selectSampleTask" targetRef="analyzeSampleTask" />
+    <bpmn:serviceTask id="analyzeSampleTask" name="Analyze sample" camunda:class="es.upv.pros.pvalderas.bpcontroller.server.bpmn.BPMNServiceClass">
+      <bpmn:incoming>Flow_0okvd5p</bpmn:incoming>
+      <bpmn:outgoing>Flow_0039j14</bpmn:outgoing>
+    </bpmn:serviceTask>
+  </bpmn:process>
+  <bpmn:message id="ContainerArrivalID" name="ContainerArrival2" />
+  <bpmn:message id="TruckAvailableID" name="TruckAvailable" />
+  <bpmn:message id="Message_172m1m4" name="SampleSelected" />
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="Collaboration_0d1mqls">
+      <bpmndi:BPMNShape id="Participant_0dpyfe4_di" bpmnElement="Participant_DistributionCenterTest2" isHorizontal="true">
+        <dc:Bounds x="190" y="87" width="810" height="403" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_19isap4_di" bpmnElement="Lane_19isap4" isHorizontal="true">
+        <dc:Bounds x="220" y="310" width="780" height="180" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_1tfszw3_di" bpmnElement="Lane_1tfszw3" isHorizontal="true">
+        <dc:Bounds x="220" y="200" width="780" height="110" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_12ujgak_di" bpmnElement="Lane_12ujgak" isHorizontal="true">
+        <dc:Bounds x="220" y="87" width="780" height="113" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_1dwfsx0_di" bpmnElement="distributionCondition" isMarkerVisible="true">
+        <dc:Bounds x="435" y="345" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="369" y="357" width="56" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1fl7ulq_di" bpmnElement="moveToRefrigeratorTask">
+        <dc:Bounds x="530" y="330" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_09wv1q9_di" bpmnElement="containerArrivalMsg">
+        <dc:Bounds x="262" y="232" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="239" y="275" width="82" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1slpqgx_di" bpmnElement="moveToGarbageTask">
+        <dc:Bounds x="740" y="399" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0g6mp3m_di" bpmnElement="moveToDistributionTask">
+        <dc:Bounds x="880" y="321" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Event_062n7mf_di" bpmnElement="endEvent">
+        <dc:Bounds x="912" y="421" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="907" y="464" width="47" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_1lgbx5e_di" bpmnElement="bacteriaCondition" isMarkerVisible="true">
+        <dc:Bounds x="765" y="118" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="767" y="99" width="46" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_1xrtq5r_di" bpmnElement="evaluateQualityTask">
+        <dc:Bounds x="340" y="210" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_0eg1w9o_di" bpmnElement="selectSampleTask">
+        <dc:Bounds x="600" y="210" width="100" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Activity_165dz0y_di" bpmnElement="analyzeSampleTask">
+        <dc:Bounds x="600" y="103" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="SequenceFlow_14iojv6_di" bpmnElement="SequenceFlow_14iojv6">
+        <di:waypoint x="298" y="250" />
+        <di:waypoint x="340" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="SequenceFlow_0uaj4fr_di" bpmnElement="SequenceFlow_0uaj4fr">
+        <di:waypoint x="440" y="250" />
+        <di:waypoint x="460" y="250" />
+        <di:waypoint x="460" y="345" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_02k9wi9_di" bpmnElement="yesDistributionFlow">
+        <di:waypoint x="485" y="370" />
+        <di:waypoint x="530" y="370" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="486" y="348" width="18" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0039j14_di" bpmnElement="Flow_0039j14">
+        <di:waypoint x="700" y="143" />
+        <di:waypoint x="765" y="143" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_18ep62y_di" bpmnElement="noBacteriaFlow">
+        <di:waypoint x="815" y="143" />
+        <di:waypoint x="930" y="143" />
+        <di:waypoint x="930" y="321" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="944" y="161" width="13" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0yo22aq_di" bpmnElement="Flow_0yo22aq">
+        <di:waypoint x="840" y="439" />
+        <di:waypoint x="912" y="439" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0hynp42_di" bpmnElement="Flow_0hynp42">
+        <di:waypoint x="930" y="401" />
+        <di:waypoint x="930" y="421" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="SequenceFlow_17kfp18_di" bpmnElement="yesBacteriaFlow">
+        <di:waypoint x="790" y="168" />
+        <di:waypoint x="790" y="399" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="751" y="165" width="18" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="SequenceFlow_1sndom5_di" bpmnElement="noDistributionFlow">
+        <di:waypoint x="460" y="395" />
+        <di:waypoint x="460" y="439" />
+        <di:waypoint x="740" y="439" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="433" y="421" width="13" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_1oyks1g_di" bpmnElement="Flow_1oyks1g">
+        <di:waypoint x="580" y="330" />
+        <di:waypoint x="580" y="320" />
+        <di:waypoint x="650" y="320" />
+        <di:waypoint x="650" y="290" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_0okvd5p_di" bpmnElement="Flow_0okvd5p">
+        <di:waypoint x="650" y="210" />
+        <di:waypoint x="650" y="183" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

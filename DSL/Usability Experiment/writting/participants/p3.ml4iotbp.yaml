@@ -1,0 +1,90 @@
+# ML expert:missing anchors, feature fields as JSON 
+process-data-sources:
+  pds_inspection:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: insS
+          - endTime: timeStamp
+            internal-id: insE
+          - packageId: string
+
+  pds_transport:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: trS
+          - endTime: timeStamp
+            internal-id: trE
+          - packageId: string
+
+  pds_decision:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: comp
+
+iot-data-sources:
+  ids_temp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  feat_insp_dur:
+    from: pds_inspection
+    fields: [insE, insS]
+    operation: substract
+
+  feat_tr_dur:
+    from: pds_transport
+    fields: [trE, trS]
+    operation: substract
+
+  feat_temp_avg:
+    from: ids_temp
+    operation: avg
+    field: temperature
+    window: trE-trS
+
+  feat_label:
+    from: pds_decision
+    field: comp
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  dataset:
+    data:
+      - PKG: packageId
+      - DI: feat_insp_dur
+      - DT: feat_tr_dur
+      - T: feat_temp_avg
+    label:
+      OK: feat_label
+
+models:
+  model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: dataset
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15

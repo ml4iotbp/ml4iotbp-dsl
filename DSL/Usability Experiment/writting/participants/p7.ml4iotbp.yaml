@@ -1,0 +1,90 @@
+# ML expert: feature fields as JSON, missing anchors
+process-data-sources:
+  inspect:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: iS
+          - endTime: timeStamp
+            internal-id: iE
+          - packageId: string
+
+  transport:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: tS
+          - endTime: timeStamp
+            internal-id: tE
+          - packageId: string
+
+  gateway:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: comp
+
+iot-data-sources:
+  sensor:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  inspect_dur:
+    from: inspect
+    fields: [iE, iS]
+    operation: substract
+
+  trans_dur:
+    from: transport
+    fields: [tE, tS]
+    operation: substract
+
+  temp_avg:
+    from: sensor
+    operation: avg
+    field: temperature
+    window: tE-tS
+
+  label:
+    from: gateway
+    field: comp
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  ds:
+    data:
+      - ID: packageId
+      - D1: inspect_dur
+      - D2: trans_dur
+      - T: temp_avg
+    label:
+      C: label
+
+models:
+  mdl:
+    type: Classification
+    algorithm: Random Forest
+    dataset: ds
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15

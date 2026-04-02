@@ -1,0 +1,50 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'es.upv.pros'
+version = '1.0.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // --- YAML -> POJOs ---
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
+    implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.17.2'
+
+    // --- JSON-Schema validator (draft-07) ---
+    implementation 'com.networknt:json-schema-validator:1.5.3'
+
+    // --- Logging ---
+    runtimeOnly 'org.slf4j:slf4j-simple:2.0.16'
+
+    // --- RabbitMQ Client ---
+    implementation 'com.rabbitmq:amqp-client:5.22.0'
+
+     // --- SQL Lite ---
+    implementation 'org.xerial:sqlite-jdbc:3.46.1.0'
+
+    //  --- Parser CSV ---
+    implementation 'org.apache.commons:commons-csv:1.10.0'
+
+    // --- Tests ---
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.3'
+
+}
+
+application {
+    mainClass = 'es.upv.pros.ml4iotbp.app.App'
+}
+
+test {
+    useJUnitPlatform()
+}

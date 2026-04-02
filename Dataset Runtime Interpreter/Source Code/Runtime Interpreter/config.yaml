@@ -1,0 +1,147 @@
+runtime-predictions:
+  predict_bacteria_before_analysis:
+    model: ml_bacteria_prediction
+    trigger:
+      type: Periodic
+      every: 60s
+      from:
+        selectSampleTask: started
+      until:
+        analyzeSampleTask: started
+ 
+    condition:
+      operator: ">="
+      threshold: 0.85
+      positive-class: "yes"
+      onTrue:
+        native:
+          - action: Set Variable
+            name: bacteriaDetected
+            value: "yes"
+        direct:
+          - operation: Cancel
+            element-id: selectSampleTask
+          - operation: Activate
+            element-id: moveToGarbageTask
+
+
+
+
+models:
+  ml_bacteria_prediction:
+    algorithm: Random Forest
+    type: Classification
+    dataset: microbial_risk_ds
+    hyperparameters:
+      n_estimators: 300
+      max_depth: 15
+    training:
+      type: Batch
+      metrics:
+        - f1
+        - roc_auc
+
+
+
+
+
+
+
+
+
+
+
+dataset:
+  microbial_risk_ds:
+    data:
+      - CT: f_avg_container_temp
+      - CH: f_avg_container_humidity
+      - QED: f_quality_eval_duration
+      - ST: f_storage_time
+      - RT: f_avg_refrigerator_temp
+      - RH: f_avg_refrigerator_humidity
+    label: 
+      B: label_bacteria_detected
+    train-ratio: 0.7
+    val-ratio: 0.15
+    test-ratio: 0.15
+
+
+
+features:
+  f_avg_container_temp_before:
+    from: container_temperature_sensor
+    operation: avg
+    field: temperature
+    window: 30m
+    anchor:
+      element: evaluateQualityTask
+      event: started
+      correlation-key: palletId
+
+
+iot-data-sources:
+  container_temperature_sensor:
+    format: application/csv
+    paradigm: MessageOriented
+    broker: RabbitMQ
+    protocol: AMQP
+    host: localhost
+    time-stamp: d MMM uuuu HH:mm:ss z
+    topic: temp.con.topic
+    vendor-specific:
+      exchange: containers
+    schema:
+      - sensor-id: string
+      - pallet-id: string
+      - temperature: float
+      - time-stamp: timeStamp
+
+
+
+
+
+
+process-data-sources:
+  quality_event_source:
+      element-id: evaluateQualityTask 
+      type: User Task
+      events:
+        completed: 
+          variables: 
+            - startTime: timeStamp
+              internal-id: evalStartingTime 
+            - endTime: timeStamp
+              internal-id: evalCompleteTime 
+            - palletId: string 
+            - qualityFirmness: string 
+            - qualityColor: string 
+            - qualityDamages: string 
+
+
+
+ 
+
+
+config1:
+    format: application/csv
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: localhost
+    time-stamp: d MMM uuuu HH:mm:ss z
+    exchange: containers
+    
+    container_temperature_sensor:
+      topic: temp.con.topic 
+      schema:
+        - time-stamp: timeStamp
+        - temperature: float
+        - pallet-id: string
+
+    container_humidity_sensor: 
+      topic: hum.con.topic
+      schema:
+        - time-stamp: timeStamp
+        - humidity: float
+        - pallet-id: string

@@ -1,0 +1,42 @@
+dataset:
+  batch_regulation_ds:
+    num-rows: 100
+    data:
+      - f_quality_results: 
+        - PI: palletId
+        - QF: qualityFirmness
+        - QC: qualityColor
+        - D: qualityDamages
+      - QED: f_quality_eval_duration
+      - ST: f_storage_time
+      - CTB: f_avg_container_temp_before
+      - CHB: f_avg_container_humidity_before
+      - CTD: f_avg_container_temp_during
+      - CHD: f_avg_container_humidity_during
+      - RT: f_avg_refrigerator_temp
+      - RH: f_avg_refrigerator_humidity
+      - B: label_bacteria_detected
+    label: 
+      B: label_bacteria_detected
+    train-ratio: 0.7
+    val-ratio: 0.15
+    test-ratio: 0.15
+
+models:
+  ml_batch_meets_regulations:
+    type: Classification
+    algorithm: Random Forest
+    dataset: batch_regulation_ds
+    hyperparameters:
+      n_estimators: 300
+      max_depth: 15
+    training:
+      type: Batch
+      metrics:
+        - f1
+        - roc_auc
+      schedule:
+        type: Periodic
+        every: 24h
+
+

@@ -1,0 +1,80 @@
+#BPM Specialist:missing model definition
+process-data-sources:
+  inspectNode:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: insStart
+          - endTime: timeStamp
+            internal-id: insEnd
+          - packageId: string
+
+  moveNode:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: moveStart
+          - endTime: timeStamp
+            internal-id: moveEnd
+          - packageId: string
+
+  decisionNode:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: comp
+
+iot-data-sources:
+  tempNode:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  featInspect:
+    from: inspectNode
+    fields: [insEnd, insStart]
+    operation: substract
+
+  featMove:
+    from: moveNode
+    fields: [moveEnd, moveStart]
+    operation: substract
+
+  featTemp:
+    from: tempNode
+    operation: avg
+    field: temperature
+
+  featLabel:
+    from: decisionNode
+    field: comp
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  cold:
+    data:
+      - PKG: packageId
+      - DINS: featInspect
+      - DTRA: featMove
+      - TEMP: featTemp
+    label:
+      C: featLabel

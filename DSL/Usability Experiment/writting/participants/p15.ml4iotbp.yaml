@@ -1,0 +1,105 @@
+#IoT engineer: correct
+  inspection:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: inspectionStart
+          - endTime: timeStamp
+            internal-id: inspectionEnd
+          - packageId: string
+
+  transportation:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: transportStart
+          - endTime: timeStamp
+            internal-id: transportEnd
+          - packageId: string
+
+  decision:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: compliance
+
+iot-data-sources:
+  temperature:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  inspection_duration:
+    from: inspection
+    fields:
+      - inspectionEnd
+      - inspectionStart
+    operation: substract
+    anchor:
+      element: inspectionTask
+      event: completed
+
+  transportation_duration:
+    from: transportation
+    fields:
+      - transportEnd
+      - transportStart
+    operation: substract
+    anchor:
+      element: transportationTask
+      event: completed
+
+  avg_temperature:
+    from: temperature
+    operation: avg
+    field: temperature
+    window: transportEnd-transportStart
+    anchor:
+      element: transportationTask
+      event: completed
+
+  compliance_label:
+    from: decision
+    field: compliance
+    target-type: binary
+    positive-class: yes
+    anchor:
+      element: complianceGateway
+      event: path-evaluation
+
+dataset:
+  dataset:
+    data:
+      - PACKAGE: packageId
+      - INSPECTION_DURATION: inspection_duration
+      - TRANSPORT_DURATION: transportation_duration
+      - AVG_TEMP: avg_temperature
+    label:
+      COMPLIANCE: compliance_label
+
+models:
+  rf_model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: dataset
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15

@@ -1,0 +1,106 @@
+process-data-sources:
+  inspection_source:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: inspectionStart
+          - endTime: timeStamp
+            internal-id: inspectionEnd
+          - packageId: string
+
+  transportation_source:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: transportationStart
+          - endTime: timeStamp
+            internal-id: transportationEnd
+          - packageId: string
+
+  decision_source:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: compliance
+
+iot-data-sources:
+  temp_sensor:
+    format: application/json
+    paradigm: MessageOriented
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    protocol: AMQP
+    broker: RabbitMQ
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+        exchange: temp
+
+features:
+  f_inspection_duration:
+    from: inspection_source
+    fields:
+      - inspectionEnd
+      - inspectionStart
+    operation: substract
+    anchor:
+      element: inspection_source
+      event: completed
+
+  f_transportation_duration:
+    from: inspection_source
+    fields:
+      - transportationEnd
+      - transportationStart
+    operation: substract
+    anchor:
+      element: transportation_source
+      event: completed
+
+  f_avg_temp:
+    from: temp_sensor
+    operation: avg
+    field: temperature
+    window: transportationEnd-transportationStart
+    anchor:
+      element: transportation_source
+      event: completed
+
+  label_compliance:
+    from: decision_source
+    field: compliance
+    target-type: binary
+    positive-class: yes
+    anchor:
+      element: meetSaleableCondition
+      event: path-evaluation
+
+dataset:
+  cold_chain_ds:
+    data:
+      - ID: packageId
+      - DI: f_inspection_duration
+      - DT: f_transportation_duration
+      - TEMP: f_avg_temp
+    label:
+      C: label_compliance
+
+models:
+  compliance_model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: cold_chain_ds
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15
+      

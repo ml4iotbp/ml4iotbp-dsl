@@ -1,0 +1,106 @@
+#ML expert: correct
+process-data-sources:
+  srcInspect:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: inspectionStart
+          - endTime: timeStamp
+            internal-id: inspectionEnd
+          - packageId: string
+
+  srcTransport:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: transportStart
+          - endTime: timeStamp
+            internal-id: transportEnd
+          - packageId: string
+
+  srcDecision:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: compliance
+
+iot-data-sources:
+  srcTemp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  featureInspectionDuration:
+    from: srcInspect
+    fields:
+      - inspectionEnd
+      - inspectionStart
+    operation: substract
+    anchor:
+      element: inspectionTask
+      event: completed
+
+  featureTransportationDuration:
+    from: srcTransport
+    fields:
+      - transportEnd
+      - transportStart
+    operation: substract
+    anchor:
+      element: transportationTask
+      event: completed
+
+  featureAvgTemperature:
+    from: srcTemp
+    operation: avg
+    field: temperature
+    window: transportEnd-transportStart
+    anchor:
+      element: transportationTask
+      event: completed
+
+  featureCompliance:
+    from: srcDecision
+    field: compliance
+    target-type: binary
+    positive-class: yes
+    anchor:
+      element: complianceGateway
+      event: path-evaluation
+
+dataset:
+  ds:
+    data:
+      - PID: packageId
+      - INS_DUR: featureInspectionDuration
+      - TRANS_DUR: featureTransportationDuration
+      - AVG_TEMP: featureAvgTemperature
+    label:
+      COMPLIANT: featureCompliance
+
+models:
+  rf:
+    type: Classification
+    algorithm: Random Forest
+    dataset: ds
+    hyperparameters:
+      max_depth: 15
+      n_estimators: 250

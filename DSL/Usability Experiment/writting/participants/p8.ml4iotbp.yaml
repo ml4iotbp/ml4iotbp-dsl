@@ -1,0 +1,91 @@
+#BPM Specialist:wrong IoT DS, missing anchors
+process-data-sources:
+  inspection:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: inspectionStart
+          - endTime: timeStamp
+            internal-id: inspectionEnd
+          - packageId: string
+
+  transportation:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: transportationStart
+          - endTime: timeStamp
+            internal-id: transportationEnd
+          - packageId: string
+
+  compliance:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: compliance
+
+iot-data-sources:
+  temp_source:
+    format: application/json
+    paradigm: HTTPCompliant   
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+
+features:
+  inspection_duration:
+    from: inspection
+    fields:
+      - inspectionEnd
+      - inspectionStart
+    operation: substract
+
+  transportation_duration:
+    from: transportation
+    fields: 
+      - transportationEnd
+      - transportationStart
+    operation: substract
+
+  avg_temp:
+    from: temp_source
+    operation: avg
+    field: temperature
+
+  label:
+    from: compliance
+    field: compliance
+    target-type: binary
+    positive-class: yes
+
+dataset:
+  ds:
+    data:
+      - ID: packageId
+      - DI: inspection_duration
+      - DT: transportation_duration
+      - TEMP: avg_temp
+    label:
+      C: label
+
+models:
+  model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: ds
+    hyperparameters:
+      n_estimators: 250
+      max_depth: 15
+      
+     

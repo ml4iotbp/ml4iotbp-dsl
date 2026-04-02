@@ -1,0 +1,86 @@
+#BPM Specialist: missing label in dataset, no positive-class, fields as JSON arrays
+process-data-sources:
+  insp:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: s
+          - endTime: timeStamp
+            internal-id: e
+          - packageId: string
+
+  trans:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: ts
+          - endTime: timeStamp
+            internal-id: te
+          - packageId: string
+
+  dec:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: c
+
+iot-data-sources:
+  temp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  dinsp:
+    from: insp
+    fields: [e, s]
+    operation: substract
+
+  dtrans:
+    from: trans
+    fields: [te, ts]
+    operation: substract
+
+  avgtemp:
+    from: temp
+    operation: avg
+    field: temperature
+
+  label:
+    from: dec
+    field: c
+    target-type: binary
+
+dataset:
+  dataset:
+    data:
+      - PID: packageId
+      - DI: dinsp
+      - DT: dtrans
+      - TEMP: avgtemp
+
+models:
+  model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: dataset
+    hyperparameters:
+      max_depth: 15
+      n_estimators: 250

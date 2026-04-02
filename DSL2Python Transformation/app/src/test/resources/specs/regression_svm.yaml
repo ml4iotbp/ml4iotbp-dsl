@@ -1,0 +1,16 @@
+dataset:
+  house_ds:
+    train-ratio: 0.7
+    val-ratio: 0.1
+    test-ratio: 0.2
+
+models:
+  price_model:
+    type: Regression
+    algorithm: SVM
+    dataset: house_ds
+    training:
+      type: Batch
+      metrics: [mae, mse, rmse]
+    hyperparameters:
+      C: 1.0

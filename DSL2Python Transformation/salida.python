@@ -1,0 +1,505 @@
+from __future__ import annotations
+from typing import Dict, Any, Tuple, Optional, List
+import os
+import time
+import argparse
+import numpy as np
+import pandas as pd
+import joblib
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import f1_score, roc_auc_score
+from apscheduler.schedulers.background import BackgroundScheduler
+from fastapi import FastAPI, HTTPException
+import uvicorn
+
+# --- Preprocessing (one-hot) & CSV loader ---
+def preprocess_X(df: pd.DataFrame, feature_columns: Optional[List[str]] = None) -> Tuple[pd.DataFrame, List[str]]:
+    X = pd.get_dummies(df, drop_first=True)
+    X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
+    if feature_columns is None:
+        feature_columns = list(X.columns)
+        return X, feature_columns
+    X = X.reindex(columns=feature_columns, fill_value=0)
+    return X, feature_columns
+
+def load_dataset(csv_path: str, task_type: str) -> Tuple[pd.DataFrame, Optional[pd.Series], List[str]]:
+    """Load dataset from CSV.
+    For Classification/Regression returns X, y, feature_columns.
+    For Clustering returns X, None, feature_columns.
+    Target column heuristic: 'target', else 'label', else last column.
+    """
+    df = pd.read_csv(csv_path)
+    if df.shape[1] < 1:
+        raise ValueError(f"Empty dataset: {csv_path}")
+
+    if task_type == 'Clustering':
+        X, cols = preprocess_X(df, None)
+        return X, None, cols
+
+    if 'target' in df.columns:
+        y = df['target']
+        Xraw = df.drop(columns=['target'])
+    elif 'label' in df.columns:
+        y = df['label']
+        Xraw = df.drop(columns=['label'])
+    else:
+        y = df.iloc[:, -1]
+        Xraw = df.iloc[:, :-1]
+
+    X, cols = preprocess_X(Xraw, None)
+    return X, y, cols
+
+# --- Dataset override support ---
+def parse_dataset_overrides(dataset_args: Optional[List[str]]) -> Dict[str, str]:
+    overrides: Dict[str, str] = {}
+    if not dataset_args:
+        return overrides
+    for raw in dataset_args:
+        if '=' in raw:
+            model_name, path = raw.split('=', 1)
+            model_name = model_name.strip()
+            path = path.strip()
+            if not model_name or not path:
+                raise ValueError(f"Invalid --dataset override: {raw}")
+            overrides[model_name] = path
+        else:
+            raw = raw.strip()
+            if not raw:
+                raise ValueError("--dataset cannot be empty")
+            overrides['__default__'] = raw
+    return overrides
+
+def resolve_dataset_for_model(model_name: str, spec: Dict[str, Any], dataset_overrides: Optional[Dict[str, str]] = None) -> str:
+    dataset_overrides = dataset_overrides or {}
+    if model_name in dataset_overrides:
+        return dataset_overrides[model_name]
+    if '__default__' in dataset_overrides:
+        return dataset_overrides['__default__']
+    # fallback: use dataset logical name as path if no override was provided
+    return spec['dataset']
+
+# --- Dataset split specifications from DSL ---
+def dataset_specs() -> Dict[str, Dict[str, float]]:
+    specs: Dict[str, Dict[str, float]] = {}
+
+    specs['batch_regulation_ds'] = {
+        'train_ratio': 0.7,
+        'val_ratio': 0.15,
+        'test_ratio': 0.15
+    }
+
+    return specs
+
+# --- Model artifacts ---
+def save_artifact(model_name: str, model: Any, feature_columns: List[str], out_dir: str) -> str:
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{model_name}.joblib")
+    joblib.dump({'model': model, 'feature_columns': feature_columns}, path)
+    return path
+
+def load_artifact(model_name: str, out_dir: str) -> Tuple[Any, List[str]]:
+    path = os.path.join(out_dir, f"{model_name}.joblib")
+    payload = joblib.load(path)
+    return payload['model'], payload['feature_columns']
+
+# --- Build models ---
+def build_models() -> Dict[str, Any]:
+    models: Dict[str, Any] = {}
+
+    # ml_batch_meets_regulations
+    models['ml_batch_meets_regulations'] = RandomForestClassifier(n_estimators=300, max_depth=15)
+
+    return models
+
+# --- DSL model specifications ---
+def model_specs() -> Dict[str, Dict[str, Any]]:
+    specs: Dict[str, Dict[str, Any]] = {}
+
+    specs['ml_batch_meets_regulations'] = {
+        'type': 'Classification',
+        'dataset': r'batch_regulation_ds',
+        'metrics': ['f1', 'roc_auc'],
+        'schedule': {'type': 'Periodic', 'every': '24h'}
+    }
+
+    return specs
+
+# --- Training ---
+def train_one(model_name: str, model: Any, spec: Dict[str, Any], dataset_overrides: Optional[Dict[str, str]] = None) -> Tuple[Any, Dict[str, Any], List[str]]:
+    dataset_path = resolve_dataset_for_model(model_name, spec, dataset_overrides)
+    X, y, feature_cols = load_dataset(dataset_path, spec['type'])
+    task = spec['type']
+    split_cfg = dataset_specs().get(spec['dataset'], {'train_ratio': 0.7, 'val_ratio': 0.1, 'test_ratio': 0.2})
+    train_ratio = split_cfg['train_ratio']
+    val_ratio = split_cfg['val_ratio']
+    test_ratio = split_cfg['test_ratio']
+    total = train_ratio + val_ratio + test_ratio
+    if abs(total - 1.0) > 1e-6:
+        raise ValueError(f"Ratios must sum to 1.0 for dataset {spec['dataset']}. Got {total}")
+
+    if task in ('Classification', 'Regression'):
+        if y is None:
+            raise ValueError(f"Dataset '{dataset_path}' must provide y for {task}")
+        holdout_ratio = val_ratio + test_ratio
+        if holdout_ratio <= 0 or train_ratio <= 0:
+            raise ValueError('Invalid train/val/test ratios for supervised learning')
+        X_train, X_holdout, y_train, y_holdout = train_test_split(
+            X, y, test_size=holdout_ratio, random_state=42
+        )
+        if val_ratio > 0 and test_ratio > 0:
+            test_fraction_within_holdout = test_ratio / (val_ratio + test_ratio)
+            X_val, X_test, y_val, y_test = train_test_split(
+                X_holdout, y_holdout, test_size=test_fraction_within_holdout, random_state=42
+            )
+        elif val_ratio > 0:
+            X_val, y_val = X_holdout, y_holdout
+            X_test, y_test = X_holdout.iloc[0:0], y_holdout.iloc[0:0]
+        else:
+            X_test, y_test = X_holdout, y_holdout
+            X_val, y_val = X_holdout.iloc[0:0], y_holdout.iloc[0:0]
+        model.fit(X_train, y_train)
+        return model, {
+            'train': (X_train, y_train),
+            'val': (X_val, y_val),
+            'test': (X_test, y_test)
+        }, feature_cols
+
+    elif task == 'Clustering':
+        holdout_ratio = val_ratio + test_ratio
+        if holdout_ratio > 0:
+            X_train, X_holdout = train_test_split(X, test_size=holdout_ratio, random_state=42)
+            if val_ratio > 0 and test_ratio > 0:
+                test_fraction_within_holdout = test_ratio / (val_ratio + test_ratio)
+                X_val, X_test = train_test_split(X_holdout, test_size=test_fraction_within_holdout, random_state=42)
+            elif val_ratio > 0:
+                X_val = X_holdout
+                X_test = X_holdout.iloc[0:0]
+            else:
+                X_test = X_holdout
+                X_val = X_holdout.iloc[0:0]
+        else:
+            X_train = X
+            X_val = X.iloc[0:0]
+            X_test = X.iloc[0:0]
+        model.fit(X_train)
+        return model, {
+            'train': (X_train, None),
+            'val': (X_val, None),
+            'test': (X_test, None)
+        }, feature_cols
+    else:
+        raise ValueError(f"Unknown task type: {task}")
+
+# --- Evaluation ---
+def evaluate_one(model_name: str, model: Any, spec: Dict[str, Any], split_data: Dict[str, Any]) -> Dict[str, Any]:
+    if len(split_data['test'][0]) > 0:
+        X_eval, y_eval = split_data['test']
+    elif len(split_data['val'][0]) > 0:
+        X_eval, y_eval = split_data['val']
+    else:
+        X_eval, y_eval = split_data['train']
+    task = spec['type']
+    metrics: List[str] = spec.get('metrics', [])
+    results: Dict[str, Any] = {}
+
+    if task == 'Classification':
+        y_pred = model.predict(X_eval)
+        for m in metrics:
+            if m == 'accuracy':
+                results[m] = float(accuracy_score(y_eval, y_pred))
+            elif m == 'precision':
+                results[m] = float(precision_score(y_eval, y_pred, average='weighted', zero_division=0))
+            elif m == 'f1':
+                results[m] = float(f1_score(y_eval, y_pred, average='weighted'))
+            elif m == 'roc_auc':
+                if hasattr(model, 'predict_proba'):
+                    y_score = model.predict_proba(X_eval)
+                elif hasattr(model, 'decision_function'):
+                    y_score = model.decision_function(X_eval)
+                else:
+                    raise ValueError('roc_auc requires predict_proba or decision_function')
+                y_score = np.asarray(y_score)
+                if y_score.ndim == 2 and y_score.shape[1] == 2:
+                    results[m] = float(roc_auc_score(y_eval, y_score[:, 1]))
+                elif y_score.ndim == 2 and y_score.shape[1] > 2:
+                    results[m] = float(roc_auc_score(y_eval, y_score, multi_class='ovo', average='weighted'))
+                else:
+                    results[m] = float(roc_auc_score(y_eval, y_score))
+            elif m == 'confusion_matrix':
+                results[m] = confusion_matrix(y_eval, y_pred).tolist()
+            else:
+                raise ValueError(f"Unsupported classification metric: {m}")
+        return results
+
+    if task == 'Regression':
+        y_pred = model.predict(X_eval)
+        for m in metrics:
+            if m == 'mae':
+                results[m] = float(mean_absolute_error(y_eval, y_pred))
+            elif m == 'mse':
+                results[m] = float(mean_squared_error(y_eval, y_pred))
+            elif m == 'rmse':
+                results[m] = float(np.sqrt(mean_squared_error(y_eval, y_pred)))
+            else:
+                raise ValueError(f"Unsupported regression metric: {m}")
+        return results
+
+    if task == 'Clustering':
+        if hasattr(model, 'labels_'):
+            labels = model.labels_
+        elif hasattr(model, 'fit_predict'):
+            labels = model.fit_predict(X_eval)
+        elif hasattr(model, 'predict'):
+            labels = model.predict(X_eval)
+        else:
+            raise ValueError('Clustering model does not expose labels_ nor fit_predict nor predict')
+
+        for m in metrics:
+            if m == 'silhouette':
+                results[m] = float(silhouette_score(X_eval, labels))
+            elif m == 'davies_bouldin':
+                results[m] = float(davies_bouldin_score(X_eval, labels))
+            elif m == 'calinski_harabasz':
+                results[m] = float(calinski_harabasz_score(X_eval, labels))
+            elif m == 'anomaly_rate':
+                labels_arr = np.asarray(labels)
+                results[m] = float(np.mean(labels_arr == -1))
+            else:
+                raise ValueError(f"Unsupported clustering/anomaly metric: {m}")
+        return results
+
+    raise ValueError(f"Unknown task type: {task}")
+
+# --- Prediction ---
+def predict_from_csv(model_name: str, in_csv: str, out_dir: str, out_csv: Optional[str] = None):
+    model, feature_cols = load_artifact(model_name, out_dir)
+    df = pd.read_csv(in_csv)
+    if 'target' in df.columns:
+        df = df.drop(columns=['target'])
+    if 'label' in df.columns:
+        df = df.drop(columns=['label'])
+    X, _ = preprocess_X(df, feature_cols)
+    y_pred = model.predict(X)
+    if out_csv:
+        pd.DataFrame({'prediction': y_pred}).to_csv(out_csv, index=False)
+        print(f"[predict] saved -> {out_csv}")
+    else:
+        print(y_pred)
+
+def predict_from_dataframe(model_name: str, df: pd.DataFrame, out_dir: str):
+    model, feature_cols = load_artifact(model_name, out_dir)
+    if 'target' in df.columns:
+        df = df.drop(columns=['target'])
+    if 'label' in df.columns:
+        df = df.drop(columns=['label'])
+    X, _ = preprocess_X(df, feature_cols)
+    y_pred = model.predict(X)
+    result = {'predictions': y_pred.tolist()}
+    if hasattr(model, 'predict_proba'):
+        try:
+            result['probabilities'] = model.predict_proba(X).tolist()
+        except Exception:
+            pass
+    return result
+
+def predict_one_instance(model_name: str, instance: Dict[str, Any], out_dir: str):
+    df = pd.DataFrame([instance])
+    return predict_from_dataframe(model_name, df, out_dir)
+
+# --- Retraining schedule ---
+def parse_duration_seconds(expr: str) -> int:
+    expr = str(expr).strip().lower()
+    if expr.endswith('s'): return int(expr[:-1])
+    if expr.endswith('m'): return int(expr[:-1]) * 60
+    if expr.endswith('h'): return int(expr[:-1]) * 3600
+    if expr.endswith('d'): return int(expr[:-1]) * 86400
+    raise ValueError(f"Unsupported duration format: {expr}. Use Ns/Nm/Nh/Nd")
+
+def setup_retraining(models: Dict[str, Any], specs: Dict[str, Dict[str, Any]], retrain_fn):
+    scheduler = BackgroundScheduler()
+    for name, spec in specs.items():
+        sch = spec.get('schedule', {})
+        stype = sch.get('type')
+        if stype == 'Periodic':
+            every = sch.get('every')
+            if not every:
+                raise ValueError(f"Periodic schedule requires 'every' for model {name}")
+            seconds = parse_duration_seconds(every)
+            scheduler.add_job(lambda n=name: retrain_fn(n), 'interval', seconds=seconds)
+        elif stype == 'EventBased':
+            print(f"[schedule] EventBased for {name}: onEvent={sch.get('onEvent')}")
+        elif stype is None:
+            pass
+        else:
+            raise ValueError(f"Unknown schedule type: {stype}")
+
+    if scheduler.get_jobs():
+        scheduler.start()
+        return scheduler
+    return None
+
+# --- REST API ---
+def create_rest_app(out_dir: str) -> FastAPI:
+    app = FastAPI(title='Generated ML Model Service', version='1.0.0')
+
+    @app.get('/health')
+    def health():
+        return {'status': 'ok'}
+
+    @app.get('/models')
+    def list_models():
+        specs = model_specs()
+        return {
+            'models': [
+                {
+                    'name': name,
+                    'type': spec['type'],
+                    'dataset': spec['dataset'],
+                    'metrics': spec.get('metrics', [])
+                }
+                for name, spec in specs.items()
+            ]
+        }
+
+    @app.post('/predict/{model_name}')
+    def predict(model_name: str, payload: Dict[str, Any]):
+        try:
+            instances = payload.get('instances')
+            if not instances or not isinstance(instances, list):
+                raise HTTPException(status_code=400, detail="Payload must contain a non-empty 'instances' list")
+            df = pd.DataFrame(instances)
+            return predict_from_dataframe(model_name, df, out_dir)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Artifact for model '{model_name}' not found")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post('/predict-batch/{model_name}')
+    def predict_batch(model_name: str, payload: Dict[str, Any]):
+        try:
+            instances = payload.get('instances')
+            if not instances or not isinstance(instances, list):
+                raise HTTPException(status_code=400, detail="Payload must contain a non-empty 'instances' list")
+            df = pd.DataFrame(instances)
+            return predict_from_dataframe(model_name, df, out_dir)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Artifact for model '{model_name}' not found")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post('/reload/{model_name}')
+    def reload_model(model_name: str):
+        try:
+            load_artifact(model_name, out_dir)
+            return {'status': 'reloaded', 'model': model_name}
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Artifact for model '{model_name}' not found")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    return app
+
+# --- CLI ---
+def train_all(out_dir: str, dataset_overrides: Optional[Dict[str, str]] = None):
+    models = build_models()
+    specs = model_specs()
+    for name in list(models.keys()):
+        model, split_data, feature_cols = train_one(name, models[name], specs[name], dataset_overrides)
+        models[name] = model
+        if specs[name].get('metrics'):
+            res = evaluate_one(name, model, specs[name], split_data)
+            print(f"[eval] {name} -> {res}")
+        path = save_artifact(name, model, feature_cols, out_dir)
+        print(f"[save] {name} -> {path}")
+
+def eval_all(out_dir: str, dataset_overrides: Optional[Dict[str, str]] = None):
+    specs = model_specs()
+    fresh_models = build_models()
+    for name, spec in specs.items():
+        if not spec.get('metrics'):
+            continue
+        model, _feature_cols = load_artifact(name, out_dir)
+        _trained, split_data, _cols = train_one(name, fresh_models[name], spec, dataset_overrides)
+        res = evaluate_one(name, model, spec, split_data)
+        print(f"[eval] {name} -> {res}")
+
+def serve_schedule(out_dir: str, dataset_overrides: Optional[Dict[str, str]] = None):
+    models = build_models()
+    specs = model_specs()
+
+    for name in list(models.keys()):
+        model, split_data, feature_cols = train_one(name, models[name], specs[name], dataset_overrides)
+        models[name] = model
+        save_artifact(name, model, feature_cols, out_dir)
+        if specs[name].get('metrics'):
+            print(f"[eval] {name} -> {evaluate_one(name, model, specs[name], split_data)}")
+
+    def retrain_and_save(model_name: str):
+        spec = specs[model_name]
+        model = models[model_name]
+        dataset_path = resolve_dataset_for_model(model_name, spec, dataset_overrides)
+        print(f"[retrain] {model_name} dataset={dataset_path}")
+        model, split_data, feature_cols = train_one(model_name, model, spec, dataset_overrides)
+        models[model_name] = model
+        save_artifact(model_name, model, feature_cols, out_dir)
+        if spec.get('metrics'):
+            print(f"[eval] {model_name} -> {evaluate_one(model_name, model, spec, split_data)}")
+
+    sched = setup_retraining(models, specs, retrain_and_save)
+    if sched is not None:
+        print('[schedule] retraining scheduler started (Ctrl+C to stop)')
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            sched.shutdown()
+    else:
+        print('[schedule] no periodic jobs configured')
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest='cmd', required=True)
+
+    p_train = sub.add_parser('train')
+    p_train.add_argument('--out-dir', default='artifacts')
+    p_train.add_argument('--dataset', action='append', help="Override dataset path. Use either --dataset path.csv or --dataset model=path.csv")
+
+    p_eval = sub.add_parser('eval')
+    p_eval.add_argument('--out-dir', default='artifacts')
+    p_eval.add_argument('--dataset', action='append', help="Override dataset path. Use either --dataset path.csv or --dataset model=path.csv")
+
+    p_pred = sub.add_parser('predict')
+    p_pred.add_argument('--model', required=True)
+    p_pred.add_argument('--in-csv', required=True)
+    p_pred.add_argument('--out-dir', default='artifacts')
+    p_pred.add_argument('--out-csv')
+
+    p_sched = sub.add_parser('serve-schedule')
+    p_sched.add_argument('--out-dir', default='artifacts')
+    p_sched.add_argument('--dataset', action='append', help="Override dataset path. Use either --dataset path.csv or --dataset model=path.csv")
+
+    p_rest = sub.add_parser('serve-rest')
+    p_rest.add_argument('--out-dir', default='artifacts')
+    p_rest.add_argument('--host', default='127.0.0.1')
+    p_rest.add_argument('--port', type=int, default=8000)
+
+    args = parser.parse_args()
+    if args.cmd == 'train':
+        train_all(args.out_dir, parse_dataset_overrides(args.dataset))
+    elif args.cmd == 'eval':
+        eval_all(args.out_dir, parse_dataset_overrides(args.dataset))
+    elif args.cmd == 'predict':
+        predict_from_csv(args.model, args.in_csv, args.out_dir, args.out_csv)
+    elif args.cmd == 'serve-schedule':
+        serve_schedule(args.out_dir, parse_dataset_overrides(args.dataset))
+    elif args.cmd == 'serve-rest':
+        app = create_rest_app(args.out_dir)
+        uvicorn.run(app, host=args.host, port=args.port)
+
+if __name__ == '__main__':
+    main()

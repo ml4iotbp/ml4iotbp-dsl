@@ -1,0 +1,20 @@
+dataset:
+  churn_ds:
+    train-ratio: 0.6
+    val-ratio: 0.2
+    test-ratio: 0.2
+
+models:
+  churn_model:
+    type: Classification
+    algorithm: Random Forest
+    dataset: churn_ds
+    training:
+      type: Batch
+      metrics: [accuracy, precision, f1, roc_auc, confusion_matrix]
+      schedule:
+        type: Periodic
+        every: "10m"
+    hyperparameters:
+      n_estimators: 10
+      random_state: 42

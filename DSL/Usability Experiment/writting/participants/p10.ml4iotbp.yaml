@@ -1,0 +1,88 @@
+#BPM Specialist: wrong source in transport duration, no positive-class
+process-data-sources:
+  src_i:
+    element-id: inspectionTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: iS
+          - endTime: timeStamp
+            internal-id: iE
+          - packageId: string
+
+  src_t:
+    element-id: transportationTask
+    type: User Task
+    events:
+      completed:
+        variables:
+          - startTime: timeStamp
+            internal-id: tS
+          - endTime: timeStamp
+            internal-id: tE
+          - packageId: string
+
+  src_g:
+    element-id: complianceGateway
+    type: Exclusive Gateway
+    events:
+      path-evaluation:
+        variables:
+          - selectedFlow: string
+            internal-id: comp
+
+iot-data-sources:
+  src_temp:
+    format: application/json
+    paradigm: MessageOriented
+    protocol: AMQP
+    broker: RabbitMQ
+    host: http://localhost
+    time-stamp: yyyy-MM-dd HH:mm:ss
+    schema:
+      - temperature: float
+      - timeStamp: timeStamp
+    vendor-specific:
+      exchange: temp
+
+features:
+  f_i:
+    from: src_i
+    fields: [iE, iS]
+    operation: substract
+
+  f_t:
+    from: src_i   # error
+    fields: [tE, tS]
+    operation: substract
+
+  f_temp:
+    from: src_temp
+    operation: avg
+    field: temperature
+
+  f_label:
+    from: src_g
+    field: comp
+    target-type: binary
+
+dataset:
+  ds:
+    data:
+      - ID: packageId
+      - DI: f_i
+      - DT: f_t
+      - TEMP: f_temp
+    label:
+      C: f_label
+
+models:
+  m:
+    type: Classification
+    algorithm: Random Forest
+    hyperparameters:
+      max_depth: 15
+      n_estimators: 250
+    dataset: ds

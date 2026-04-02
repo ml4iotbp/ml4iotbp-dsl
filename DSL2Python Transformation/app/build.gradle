@@ -1,0 +1,42 @@
+plugins {
+  id 'application'
+  id 'java'
+}
+
+group = 'upv.pros'
+version = '1.0.0'
+
+java {
+  toolchain {
+    languageVersion = JavaLanguageVersion.of(17)
+  }
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  // JSON/YAML parsing
+  implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
+  implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.17.2'
+
+  // JSON Schema validator (draft-07)
+  implementation 'com.networknt:json-schema-validator:1.5.4'
+
+  testImplementation platform('org.junit:junit-bom:5.10.2')
+  testImplementation 'org.junit.jupiter:junit-jupiter'
+  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application {
+  mainClass = 'es.upv.pros.mlgenerator.Main'
+}
+
+tasks.withType(JavaCompile).configureEach {
+  options.encoding = 'UTF-8'
+}
+
+test {
+  useJUnitPlatform()
+}
