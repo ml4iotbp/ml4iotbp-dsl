@@ -1,12 +1,8 @@
 package es.upv.pros.ml4iotbp.datasets;
 
-import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.SQLException;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Hashtable;
@@ -34,6 +30,7 @@ import es.upv.pros.ml4iotbp.domain.features.CompositeFeatureFrom;
 import es.upv.pros.ml4iotbp.domain.features.Feature;
 import es.upv.pros.ml4iotbp.domain.features.SimpleFeatureFrom;
 import es.upv.pros.ml4iotbp.domain.features.SourceSelection;
+import es.upv.pros.ml4iotbp.domain.features.Feature.Anchor;
 import es.upv.pros.ml4iotbp.runtimedata.IoTRepository;
 import es.upv.pros.ml4iotbp.utils.DurationParser;
 
@@ -70,6 +67,22 @@ public class DatasetConstructor {
                     }
             });
 
+            //Here we add Process DS that include variables that must be captured in non-anchored events
+            doc.getProcessDataSources().forEach((dsName, pds) ->{  
+                pds.getEvents().forEach((eventName, eventDef) ->{
+                    Feature f=new Feature();
+                    f.setName(dsName);
+                    f.setOperation(null);
+                    Anchor a=new Anchor();
+                    a.setElement(pds.getElementId());
+                    a.setEvent(eventName);
+                    f.setAnchor(a);
+                    Map<String,List<Feature>> elements=getElementMap(f);
+                    if(elements.get(eventName)==null)
+                        addEventFeature(elements, f);
+                });
+            });
+
             //showFeature();
 
             
@@ -90,6 +103,7 @@ public class DatasetConstructor {
                 List<Feature> features=anchoredFeatures.get(event.getElementId()).get(event.getEventName());
                 for(Feature f:features){
                     if(isProcessFeatured(f)){
+                        if(f.getTargetType()!=null) f.setOperation("future_event_exists");
                         calculateProcessFeature(event.getProcessInstanceId(),f);
                     }else{
                          calculateIoTFeature(event.getProcessInstanceId(),event.getTimeStamp(),f);
@@ -122,6 +136,14 @@ public class DatasetConstructor {
                     };
                 }
             };
+
+            if(dataSet.getLabel()!=null){
+                String label=dataSet.getLabel().keySet().iterator().next();
+                header+=label+",";
+                row.put(label, "");
+                featureRowMap.put(dataSet.getLabel().get(label), label);
+                fieldsInOrder.add(label);
+            }
 
             String[] columns = header.split(",");//.split("\\s*,\\s*");
             this.out = new FileWriter("output.csv");
@@ -180,33 +202,40 @@ public class DatasetConstructor {
 
         private void calculateProcessFeature(String instance, Feature f){
             List<String> featureFields=getFeatureFields(f);
-            switch(f.getOperation()){
-                case "include": 
-                                featureFields.forEach((field)->{
-                                    String label=featureRowMap.get(f.getName()+"."+field);
+            if(f.getOperation()!=null){
+                switch(f.getOperation()){
+                    case "include": 
+                                    featureFields.forEach((field)->{
+                                        String label=featureRowMap.get(f.getName()+"."+field);
+                                        if(label!=null){
+                                            DataVar var=this.instanceVars.get(instance).get(field);
+                                            row.put(label, var.getValue());
+                                        }
+                                    }); 
+                                    break;
+                    case "future_event_exists":
+                                    String label=featureRowMap.get(f.getName());
                                     if(label!=null){
-                                        DataVar var=this.instanceVars.get(instance).get(field);
+                                        DataVar var=this.instanceVars.get(instance).get(f.getField());
                                         row.put(label, var.getValue());
                                     }
-                                }); 
-                                break;
-                case "future_event_exists":
-                                String label=featureRowMap.get(f.getName());
-                                if(label!=null){
-                                    DataVar var=this.instanceVars.get(instance).get(f.getField());
-                                    row.put(label, var.getValue());
-                                }
-                                break;
-                default:
-                                String label2=featureRowMap.get(f.getName());
-                                if(label2!=null){
-                                    List<DataVar> vars=new ArrayList<DataVar>();
-                                    for (String field : featureFields) 
-                                        vars.add(this.instanceVars.get(instance).get(field));
-                                    double result=operate(f.getOperation(),vars);          
-                                    row.put(label2, result);
-                                }
-                                break;
+                                    break;
+                    default:
+                                    String label2=featureRowMap.get(f.getName());
+                                    if(label2!=null){
+                                        List<DataVar> vars=new ArrayList<DataVar>();
+                                        for (String field : featureFields) 
+                                            vars.add(this.instanceVars.get(instance).get(field));
+
+                                        if(instance.equals("b8619822-3444-11f1-89ad-92ec3147fd6f") &&
+                                            f.getName().equals("f_manual_inspection_delay")){
+                                                System.out.println("Paro");
+                                        }
+                                        double result=operate(f.getOperation(),vars);          
+                                        row.put(label2, result);
+                                    }
+                                    break;
+                }
             }
         }
 
@@ -250,7 +279,8 @@ public class DatasetConstructor {
                             long value2=Long.parseLong(this.instanceVars.get(processInstance).get(values[1].trim()).getValue().toString());
                             initInstant=eventTimeStamp-(value1-value2);
                             
-                            /*if(f.getName().equals("f_avg_refrigerator_temp")){
+                            /*if(processInstance.equals("b8619822-3444-11f1-89ad-92ec3147fd6f") &&
+                                f.getName().equals("f_manual_inspection_delay")){
                                 System.out.println("End: "+eventTimeStamp);
                                 System.out.println("Values: "+value1+"-"+value2);
                                 initInstant=eventTimeStamp-(value1-value2);
@@ -346,7 +376,14 @@ public class DatasetConstructor {
 
         private List<String> getFeatureFields(Feature f){
             List<String> fields=new ArrayList<String>();
-            if(f.getFrom() instanceof SimpleFeatureFrom){
+            if(f.getFrom()==null){ // This is a feature artificially created to add Process DS events
+                doc.getProcessDataSources().get(f.getName()).getEvents().forEach((name, eventDef)->{
+                    eventDef.getVariables().forEach((var)->{
+                        fields.add(var.getInternalId());
+                    });
+                });
+            }
+            else if(f.getFrom() instanceof SimpleFeatureFrom){
                 if(f.getField()!=null) fields.add(f.getField());
                 else{
                     f.getFields().forEach((field)->{
@@ -380,7 +417,10 @@ public class DatasetConstructor {
         }
 
         private boolean isProcessFeatured(Feature f){
-            if(f.getFrom() instanceof SimpleFeatureFrom){
+            if(f.getFrom()==null){ // This is a feature artificially created to add Process DS events
+                return true;
+            }
+            else if(f.getFrom() instanceof SimpleFeatureFrom){
                 SimpleFeatureFrom from=(SimpleFeatureFrom)f.getFrom();
                 return doc.getProcessDataSources().get(from.getSource())!=null;
             }else{

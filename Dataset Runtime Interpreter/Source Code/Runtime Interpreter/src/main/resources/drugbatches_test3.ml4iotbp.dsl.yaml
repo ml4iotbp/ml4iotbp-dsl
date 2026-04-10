@@ -6,11 +6,11 @@ process-context:
   host: http://localhost:8080/engine-rest
   format: application/json
   time-stamp: yyyy-MM-dd'T'HH:mm:ss.SSSZ
-
+  instance-time: 2026-04-09T19:30:00.000+0200 
 
 process-data-sources:
   batch_reception_source:
-    element-id: batchReceptionEvent 
+    element-id: batchArrivalMsg
     type: Message
     events:
       triggered: 
@@ -37,7 +37,7 @@ process-data-sources:
       element-id: selectSampleTask
       type: User Task
       events:
-        triggered:
+        completed:
           variables:
           - startTime: timeStamp
             internal-id: selStartingTime 
@@ -104,29 +104,29 @@ iot-data-sources:
         - light: float
         - batch-id: string
 
-    refrig_env_temperature_sensor:
+    refrig_temperature_sensor:
       exchange: refrigerator
-      topic: light.ref.topic
+      topic: temp.ref.topic
       schema:
         - temperature: float
-        - unit: string
-        - timeStamp: timeStamp
+        - batch-id: string
+        - time-stamp: timeStamp
         
-    refrig_env_humidity_sensor:
+    refrig_humidity_sensor:
       exchange: refrigerator
       topic: hum.ref.topic
       schema:
         - humidity: float
-        - unit: string
-        - timeStamp: timeStamp
+        - batch-id: string
+        - time-stamp: timeStamp
 
-    refrig_env_light_sensor:
+    refrig_light_sensor:
       exchange: refrigerator
       topic: light.ref.topic
       schema:
         - light: float
-        - unit: string
-        - timeStamp: timeStamp
+        - batch-id: string
+        - time-stamp: timeStamp
 
 features:
   f_manual_inspection_values:
@@ -144,21 +144,12 @@ features:
   f_manual_inspection_delay:
     from:
       manual_inspection_source:
-        fields: 
-          - inspectionStartingTime
+        field: inspectionCompleteTime
       batch_reception_source:
-        fields:
-          - receptionTime
-    operation: substract
-    anchor:
-      element: manualInspectionTask
-      event: started
-
-  f_manual_inspection_duration:
-    from: manual_inspection_source
+        field: receptionTime
     fields: 
-      - inspectionCompleteTime
-      - inspectionStartingTime
+      - inspectionCompleteTime 
+      - receptionTime
     operation: substract
     anchor:
       element: manualInspectionTask
@@ -220,8 +211,8 @@ features:
       element: labReadyMessage
       event: triggered
 
-  f_avg_cont_env_temp:
-    from: cont_env_temperature_sensor
+  f_avg_refrig_temp:
+    from: refrig_temperature_sensor
     operation: avg
     field: temperature
     missing-value: drop
@@ -231,8 +222,8 @@ features:
       event: triggered
       correlation-key: batchId
 
-  f_avg_cont_env_hum:
-    from: cont_env_humidity_sensor
+  f_avg_refrig_hum:
+    from: refrig_humidity_sensor
     operation: avg
     field: humidity
     missing-value: drop
@@ -242,8 +233,8 @@ features:
       event: triggered
       correlation-key: batchId
 
-  f_avg_cont_env_light:
-    from: cont_env_light_sensor
+  f_avg_refrig_light:
+    from: refrig_light_sensor
     operation: avg
     field: light
     missing-value: drop
@@ -272,15 +263,14 @@ dataset:
         - VI: integrity
         - VC: visibleContamination
       - MIS: f_manual_inspection_delay
-      - MID: f_manual_inspection_duration
       - SSD: f_sample_selection_duration
       - RCT: f_avg_reception_temp
       - RCH: f_avg_reception_hum
       - RCL: f_avg_reception_light
       - CEW: f_waiting_duration
-      - CET: f_avg_cont_env_temp
-      - CEH: f_avg_cont_env_hum
-      - CEL: f_avg_cont_env_light
+      - CET: f_avg_refrig_temp
+      - CEH: f_avg_refrig_hum
+      - CEL: f_avg_refrig_light
     label: 
       R: label_meet_regulation
     train-ratio: 0.7

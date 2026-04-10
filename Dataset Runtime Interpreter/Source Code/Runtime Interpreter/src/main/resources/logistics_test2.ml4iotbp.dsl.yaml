@@ -222,7 +222,7 @@ dataset:
 
 models:
   ml_bacteria_prediction:
-    algorithm: Random Forest
+    algorithm: SVM
     type: Classification
     dataset: microbial_risk_ds
     hyperparameters:

@@ -122,7 +122,7 @@ public class CamundaConnector{
                             continue;
                         }
      
-                        if(activityId.equals(processContext.getStartEvent())){
+                        if(activityId.equals(processContext.getStartEvent()) && anchoredFeatures.get(activityId)==null){
                             onEvent.accept(new ProcessEvent(
                                             DataSource.parseTimeStamp(processContext.getTimeStampPattern(),  text(hai, "startTime")).toEpochMilli(),
                                             "",
