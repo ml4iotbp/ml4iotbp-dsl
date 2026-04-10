@@ -38,36 +38,20 @@ public class DataSetComparator {
                 HashSet<Integer> different=new HashSet<Integer>();
                 HashSet<Integer> no_esta=new HashSet<Integer>();
                 for(int i=1;i<adhoc_dataset.length;i++){
-                    boolean esta=false;
                     String adhoc_cols[]=adhoc_dataset[i].split(",");
                     String instance=adhoc_cols[0];
                     for(int j=1;j<interpreter_dataset.length;j++){
                         String interpreter_cols[]=interpreter_dataset[j].split(",");
                         if(interpreter_cols[0].equals(instance)){
-                            esta=true;
                             for(int h=1;h<NUM_COLS-1;h++){
                                 if(!interpreter_cols[h].equals(adhoc_cols[h])){
-                                    try{
-                                        Float ad=Float.parseFloat(adhoc_cols[h]);
-                                        Float in=Float.parseFloat(interpreter_cols[h]);
-                                        if(Math.round((Math.abs(ad-in)) * 100.0) / 100.0>0.01){
-                                            System.out.println(Math.round((Math.abs(ad-in)) * 100.0) / 100.0);
-                                            different.add(j);
-                                            System.out.println(instance+"=="+interpreter_cols[0]);
-                                            System.out.println(i+":"+j+"-->"+adhoc_cols[h]+"=="+interpreter_cols[h]);
-                                        }
-                                    }catch(Exception e){
-                                        different.add(j);
-                                        System.out.println(instance+"=="+interpreter_cols[0]);
-                                        System.out.println(i+":"+j+"-->"+adhoc_cols[h]+"=="+interpreter_cols[h]);
-                                    }
-                                    
+                                    different.add(j);
+                                    System.out.println(instance+"=="+interpreter_cols[0]);
+                                    System.out.println(i+":"+j+"-->"+adhoc_cols[h]+"=="+interpreter_cols[h]);                         
                                 }
                             }
                         }
                     }
-
-                    if(!esta) no_esta.add(i);
                 }
                 System.out.println("FILAS ANALIZADAS: "+(adhoc_dataset.length-1));
                 System.out.println("FILAS IGUALES: "+(adhoc_dataset.length-different.size()-1));
